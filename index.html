@@ -3232,69 +3232,80 @@ function pdInitials(p){ return ((p.first||'')[0]||'')+''+((p.last||'')[0]||''); 
 function pdColor(p){ return TEAMS[p.team]? TEAMS[p.team].color : '#1a3a6b'; }
 function pdRatingNum(p){ let r=parseFloat(p.rating); return isNaN(r)?0:r; }
 
+/* Check if a player was in the draw for a specific match+event */
+function pdPlayerInDraw(playerName, mi, ei, side){
+  let d = ((STATE.draws||{})[mi]||{})[ei] || {};
+  let needs = eventNeeds(EVENTS[ei]);
+  let players = getDrawPlayers(d, side, needs);
+  return players.includes(playerName);
+}
+
 function pdGetPlayerStats(p){
-  // Scan all scores to find games this player was in (based on team)
-  let wins=0, losses=0, matchesPlayed=0, eventsPlayed=0, eventsWon=0;
-  MATCHUPS.forEach((m,mi)=>{
-    let isT1 = m.t1===p.team, isT2 = m.t2===p.team;
-    if(!isT1 && !isT2) return;
-    let mdata = STATE.scores[mi]||{};
-    if(!Object.keys(mdata).length) return;
-    matchesPlayed++;
-    EVENTS.forEach((_,ei)=>{
-      let ed=mdata[ei]||{};
-      if(!ed.winner) return;
-      eventsPlayed++;
-      let won = (isT1 && ed.winner==='t1') || (isT2 && ed.winner==='t2');
-      if(won) eventsWon++; else losses++;
-    });
-    wins += eventsWon;
-    // recount losses properly
-  });
-  // Recount properly
-  wins=0; losses=0; eventsPlayed=0;
+  const pname = fullName(p);
+  let wins=0, losses=0, eventsPlayed=0, matchesPlayed=0, mWins=0, mLosses=0;
+
   MATCHUPS.forEach((m,mi)=>{
     let isT1=m.t1===p.team, isT2=m.t2===p.team;
     if(!isT1&&!isT2) return;
     let mdata=STATE.scores[mi]||{};
     if(!Object.keys(mdata).length) return;
-    EVENTS.forEach((_,ei)=>{
+
+    let side = isT1 ? 't1' : 't2';
+    let playerEvWins=0, playerEvLosses=0;
+    let matchHasPlayerEvent=false;
+
+    EVENTS.forEach((ev,ei)=>{
       let ed=mdata[ei]||{};
       if(!ed.winner) return;
+      // Only count this event if the player was actually in the draw for it
+      if(!pdPlayerInDraw(pname, mi, ei, side)) return;
+      matchHasPlayerEvent=true;
       eventsPlayed++;
       let won=(isT1&&ed.winner==='t1')||(isT2&&ed.winner==='t2');
-      if(won) wins++; else losses++;
+      if(won){ wins++; playerEvWins++; } else { losses++; playerEvLosses++; }
     });
+
+    // Only count match-level win/loss if the player featured in at least one event
+    if(matchHasPlayerEvent){
+      matchesPlayed++;
+      let t1w=0,t2w=0;
+      EVENTS.forEach((_,ei)=>{ let w=(mdata[ei]||{}).winner; if(w==='t1')t1w++; else if(w==='t2')t2w++; });
+      if(t1w+t2w>0){
+        let teamWon=(isT1&&t1w>t2w)||(isT2&&t2w>t1w);
+        if(teamWon) mWins++; else mLosses++;
+      }
+    }
   });
-  // match-level
-  let mWins=0, mLosses=0;
-  MATCHUPS.forEach((m,mi)=>{
-    let isT1=m.t1===p.team, isT2=m.t2===p.team;
-    if(!isT1&&!isT2) return;
-    let mdata=STATE.scores[mi]||{};
-    if(!Object.keys(mdata).length) return;
-    let t1w=0,t2w=0;
-    EVENTS.forEach((_,ei)=>{ let w=(mdata[ei]||{}).winner; if(w==='t1')t1w++; else if(w==='t2')t2w++; });
-    if(t1w+t2w===0) return;
-    let won=(isT1&&t1w>t2w)||(isT2&&t2w>t1w);
-    if(won) mWins++; else mLosses++;
-  });
+
   return { wins, losses, eventsPlayed, matchesPlayed, mWins, mLosses };
 }
 
 function pdGetMatchHistory(p){
+  const pname = fullName(p);
   let hist=[];
   MATCHUPS.forEach((m,mi)=>{
     let isT1=m.t1===p.team, isT2=m.t2===p.team;
     if(!isT1&&!isT2) return;
     let mdata=STATE.scores[mi]||{};
     if(!Object.keys(mdata).length) return;
+    let side = isT1?'t1':'t2';
+    // Only include match if player was in at least one event draw
+    let featured = EVENTS.some((_,ei)=> pdPlayerInDraw(pname, mi, ei, side));
+    if(!featured) return;
     let t1w=0,t2w=0;
     EVENTS.forEach((_,ei)=>{ let w=(mdata[ei]||{}).winner; if(w==='t1')t1w++; else if(w==='t2')t2w++; });
     if(t1w+t2w===0) return;
     let opp=isT1?m.t2:m.t1;
     let teamWon=(isT1&&t1w>t2w)||(isT2&&t2w>t1w);
-    hist.push({ opp, teamWon, score: isT1?`${t1w}–${t2w}`:`${t2w}–${t1w}` });
+    // Count only player's own events won/lost in this match
+    let pWins=0, pLosses=0;
+    EVENTS.forEach((ev,ei)=>{
+      let ed=mdata[ei]||{};
+      if(!ed.winner||!pdPlayerInDraw(pname,mi,ei,side)) return;
+      let won=(isT1&&ed.winner==='t1')||(isT2&&ed.winner==='t2');
+      if(won) pWins++; else pLosses++;
+    });
+    hist.push({ opp, teamWon, score: isT1?`${t1w}–${t2w}`:`${t2w}–${t1w}`, pWins, pLosses });
   });
   return hist;
 }
@@ -3626,7 +3637,7 @@ function pdEnsureModal(){
 // ── Court Number helpers ──────────────────────────────────────────
 function courtOpts(selectedVal, isAdmin){
   var opts = '<option value="">— Court —</option>';
-  [5,6,7,8,9].forEach(function(n){
+  [5,6,7,8,9,10].forEach(function(n){
     opts += '<option value="'+n+'"'+(selectedVal==n?' selected':'')+'>Court '+n+'</option>';
   });
   return opts;
@@ -3780,3 +3791,4 @@ if(typeof navigate === 'function'){
 
 </body>
 </html>
+

@@ -573,11 +573,22 @@
     btn.disabled = true;
     btn.textContent = "Submitting…";
 
-    // Build a real native form and submit it — most reliable approach
+    // Remove any old iframe first
+    const old = document.getElementById("gform_iframe");
+    if (old) document.body.removeChild(old);
+
+    // Create hidden iframe to catch the Google Form response
+    const iframe = document.createElement("iframe");
+    iframe.id = "gform_iframe";
+    iframe.name = "gform_iframe";
+    iframe.style.cssText = "display:none;width:0;height:0;border:0;position:absolute;";
+    document.body.appendChild(iframe);
+
+    // Create and submit a native form targeting the hidden iframe
     const form = document.createElement("form");
     form.method = "POST";
     form.action = FORM_URL;
-    form.target = "_blank";
+    form.target = "gform_iframe";
     form.style.display = "none";
 
     const fieldData = {
@@ -608,10 +619,13 @@
     form.submit();
     document.body.removeChild(form);
 
-    showStatus("success", "✅ You're registered! We'll be in touch soon.");
-    clearForm();
-    btn.disabled = false;
-    btn.textContent = "Register for Auction Draft";
+    // Show success after a short delay
+    setTimeout(() => {
+      showStatus("success", "✅ You're registered! We'll be in touch soon.");
+      clearForm();
+      btn.disabled = false;
+      btn.textContent = "Register for Auction Draft";
+    }, 1500);
   }
 
   function showStatus(type, msg) {
